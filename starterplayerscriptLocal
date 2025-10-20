@@ -1,0 +1,142 @@
+-- LocalScript ใน StarterPlayer > StarterPlayerScripts (เวอร์ชันตรวจสอบห้อง)
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local CollectionService = game:GetService("CollectionService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local mouse = player:GetMouse()
+local camera = workspace.CurrentCamera
+
+-- UI และ Events
+local screenGui = playerGui:WaitForChild("ScreenGui")
+local purchaseMenu = screenGui:WaitForChild("PurchaseMenu")
+local buyButton = purchaseMenu:WaitForChild("BuyButton")
+local upgradeMenu = screenGui:WaitForChild("UpgradeMenu")
+local upgradeButton = upgradeMenu:WaitForChild("UpgradeButton")
+local PlaceItemEvent = ReplicatedStorage:WaitForChild("PlaceItemEvent")
+local UpgradeRequestEvent = ReplicatedStorage:WaitForChild("UpgradeRequestEvent")
+
+-- State Variables
+local selectedTile = nil
+local placeHighlight = nil
+local selectedItemToUpgrade = nil
+local upgradeHighlight = nil
+local hoverHighlight = nil
+local lastHoverTarget = nil
+
+-- ฟังก์ชันจัดการ Highlight และ UI
+local function destroyAllHighlights()
+	if hoverHighlight then hoverHighlight:Destroy() hoverHighlight = nil end
+	if placeHighlight then placeHighlight:Destroy() placeHighlight = nil end
+	if upgradeHighlight then upgradeHighlight:Destroy() upgradeHighlight = nil end
+end
+
+local function hideAllMenus()
+	purchaseMenu.Visible = false
+	upgradeMenu.Visible = false
+	selectedTile = nil
+	selectedItemToUpgrade = nil
+	destroyAllHighlights()
+end
+
+-- การทำงานของปุ่มต่างๆ
+buyButton.MouseButton1Click:Connect(function()
+	if selectedTile then
+		PlaceItemEvent:FireServer(selectedTile)
+		hideAllMenus()
+	end
+end)
+
+upgradeButton.MouseButton1Click:Connect(function()
+	if selectedItemToUpgrade then
+		UpgradeRequestEvent:FireServer(selectedItemToUpgrade)
+		hideAllMenus()
+	end
+end)
+
+-- ## ส่วนที่แก้ไข: ระบบ "คลิกเพื่อเลือก" ##
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+	if gameProcessedEvent then return end
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+
+	hideAllMenus()
+	local target = mouse.Target
+	local targetParent = target and target.Parent
+	local playerRoom = player:GetAttribute("CurrentRoom") -- 1. หาห้องปัจจุบันของผู้เล่น
+
+	-- 2. ตรวจสอบว่าห้องของผู้เล่นตรงกับห้องของไอเทมหรือไม่
+	if targetParent and targetParent:GetAttribute("IsUpgradable") and playerRoom == targetParent:GetAttribute("RoomID") then
+		selectedItemToUpgrade = targetParent
+		upgradeHighlight = Instance.new("Highlight", selectedItemToUpgrade)
+		upgradeHighlight.FillColor = Color3.fromRGB(255, 255, 0)
+		upgradeHighlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+		upgradeMenu.Visible = true
+		-- 3. ตรวจสอบว่าห้องของผู้เล่นตรงกับห้องของพื้นที่วางของหรือไม่
+	elseif target and CollectionService:HasTag(target, "PlaceableTile") and playerRoom == target:GetAttribute("RoomID") then
+		if target:GetAttribute("Occupied") then return end
+		selectedTile = target
+		placeHighlight = Instance.new("Highlight", selectedTile)
+		placeHighlight.FillColor = Color3.fromRGB(0, 170, 255)
+		placeHighlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+		purchaseMenu.Visible = true
+	end
+end)
+
+-- ## ส่วนที่แก้ไข: ระบบ "ชี้เพื่อแสดงกรอบ" ##
+UserInputService.InputChanged:Connect(function(input)
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+
+	local target = mouse.Target
+	if target == lastHoverTarget then return end
+	lastHoverTarget = target
+
+	if hoverHighlight then hoverHighlight:Destroy() hoverHighlight = nil end
+
+	local playerRoom = player:GetAttribute("CurrentRoom") -- 1. หาห้องปัจจุบันของผู้เล่น
+	local objectToHighlight = nil
+	local targetParent = target and target.Parent
+
+	-- 2. หาวัตถุที่อาจจะไฮไลท์ได้ (เหมือนเดิม)
+	if targetParent and targetParent:GetAttribute("IsUpgradable") then
+		objectToHighlight = targetParent
+	elseif target and CollectionService:HasTag(target, "PlaceableTile") and not target:GetAttribute("Occupied") then
+		objectToHighlight = target
+	end
+
+	-- 3. ตรวจสอบว่าวัตถุนั้นอยู่ในห้องเดียวกับผู้เล่นหรือไม่ ก่อนที่จะสร้างไฮไลท์
+	if objectToHighlight and playerRoom == objectToHighlight:GetAttribute("RoomID") then
+		if objectToHighlight ~= selectedTile and objectToHighlight ~= selectedItemToUpgrade then
+			hoverHighlight = Instance.new("Highlight", objectToHighlight)
+			hoverHighlight.FillColor = Color3.fromRGB(255, 255, 255)
+			hoverHighlight.FillTransparency = 0.8
+			hoverHighlight.OutlineTransparency = 0.5
+		end
+	end
+end)
+
+local RequestRoomFunction = ReplicatedStorage:WaitForChild("RequestRoom")
+local CollectionService = game:GetService("CollectionService")
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+local humanoid = character:WaitForChild("Humanoid")
+
+humanoidRootPart.Touched:Connect(function(touchedPart)
+	local roomID = touchedPart:GetAttribute("RoomID")
+	if not roomID then return end
+	if touchedPart.Name ~= roomID .. "_SelectPad" then return end
+	if humanoid.Health <= 0 then return end
+	if CollectionService:HasTag(character, "Zombie") then return end
+	if player:GetAttribute("CurrentRoom") == roomID then return end
+
+	-- เรียกเซิร์ฟเวอร์เพื่อขอเข้าห้อง (ไม่มีการเล่นเสียงแล้ว)
+	local success = RequestRoomFunction:InvokeServer(roomID)
+
+	if success then
+		print("ได้รับการตอบกลับจากเซิร์ฟเวอร์ว่า 'สำเร็จ'")
+	else
+		print("ได้รับการตอบกลับจากเซิร์ฟเวอร์ว่า 'ไม่สำเร็จ' (ห้องเต็ม/มีห้องแล้ว)")
+	end
+end)
