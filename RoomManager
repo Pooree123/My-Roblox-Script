@@ -1,0 +1,147 @@
+-- Script ใน ServerScriptService, ชื่อ RoomManager (เวอร์ชันแก้ไข เอาส่วน UI ออก)
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+local Workspace = game:GetService("Workspace")
+
+local RequestRoomFunction = ReplicatedStorage:WaitForChild("RequestRoom")
+local roomOccupancy = {}
+
+-- ฟังก์ชันสำหรับสลับประตู
+local function swapGate(roomID)
+	local mainRoomFolder = Workspace:FindFirstChild("Room")
+	if not mainRoomFolder then return end
+	local roomModel = mainRoomFolder:FindFirstChild(roomID)
+	if not roomModel then return end
+
+	local gateOpen = roomModel:FindFirstChild("gate open")
+	local gateCloseTemplate = ServerStorage:FindFirstChild("GateClose_Template")
+
+	if gateOpen and gateCloseTemplate then
+		if not gateOpen.PrimaryPart then return end
+		local oldCFrame = gateOpen.PrimaryPart.CFrame
+		local sound = gateCloseTemplate:FindFirstChild("door_close")
+
+		-- เล่นเสียง
+		if sound then
+			local soundClone = sound:Clone()
+			soundClone.Parent = gateOpen.PrimaryPart
+			soundClone:Play()
+			task.wait(sound.TimeLength) -- รอเสียงจบ
+			soundClone:Destroy()
+		end
+
+		-- ทำลายประตูเก่า
+		gateOpen:Destroy()
+
+		-- สร้างประตูใหม่
+		local newGateClose = gateCloseTemplate:Clone()
+		newGateClose.Name = "gate close"
+		newGateClose.Parent = roomModel
+		newGateClose:SetPrimaryPartCFrame(oldCFrame)
+		newGateClose:SetAttribute("RoomID", roomID)
+		-- ตั้งค่าเลือดเริ่มต้น (อ่านจาก Template หรือค่า Default)
+		local initialMaxHealth = gateCloseTemplate:GetAttribute("MaxHealth") or 100
+		newGateClose:SetAttribute("MaxHealth", initialMaxHealth)
+		newGateClose:SetAttribute("CurrentHealth", initialMaxHealth)
+
+
+		-- ## สร้าง UI ให้กับประตู ##
+		local statusGuiTemplate = ServerStorage:FindFirstChild("GateStatusGuiTemplate")
+		if statusGuiTemplate then
+			local newStatusGui = statusGuiTemplate:Clone()
+			if newGateClose.PrimaryPart then
+				newStatusGui.Adornee = newGateClose.PrimaryPart
+				newStatusGui.Parent = newGateClose.PrimaryPart -- ใส่ UI เข้าไปใน PrimaryPart
+				print("สร้าง GateStatusGui สำหรับประตูในห้อง:", roomID)
+			else
+				warn("ประตูใหม่ไม่มี PrimaryPart ไม่สามารถสร้าง GateStatusGui ได้")
+				newStatusGui:Destroy()
+			end
+		else
+			warn("หา GateStatusGuiTemplate ใน ServerStorage ไม่เจอ!")
+		end
+		-----------------------------------------------------
+
+		print("เซิร์ฟเวอร์ทำการสลับประตูสำหรับห้อง:", roomID)
+	end
+end
+
+-- (ฟังก์ชัน clearPlayerRoom เหมือนเดิม)
+local function clearPlayerRoom(player)
+	-- ... โค้ดเดิม ...
+end
+
+
+-- (ฟังก์ชัน onRequestRoom เหมือนเดิม แต่ไม่มีส่วน UI)
+local function onRequestRoom(player, roomID)
+	-- (ส่วนตรวจสอบห้องว่าง/ล็อค เหมือนเดิม)
+	if roomOccupancy[roomID] then return false end
+	for _, occupant in pairs(roomOccupancy) do
+		if occupant == player then return false end
+	end
+
+	-- จองห้อง, ตั้ง Attribute, สลับประตู
+	roomOccupancy[roomID] = player
+	player:SetAttribute("CurrentRoom", roomID)
+	swapGate(roomID)
+
+	-- สร้าง Water Stat
+	local waterStat = player:FindFirstChild("Water")
+	if not waterStat then
+		waterStat = Instance.new("IntValue")
+		waterStat.Name = "Water"
+		waterStat.Value = 0
+		waterStat.Parent = player
+	end
+
+	-- ## ส่วนตรวจสอบการสร้าง Water Dispenser ##
+	print("[RoomManager] Attempting to spawn dispenser for room:", roomID) -- 1. เช็คว่าเริ่มทำงานไหม
+
+	local mainRoomFolder = Workspace:FindFirstChild("Room")
+	local roomModel = mainRoomFolder and mainRoomFolder:FindFirstChild(roomID)
+	if not roomModel then
+		warn("[RoomManager] Could not find room folder for:", roomID) -- 2. เช็คว่าหาโฟลเดอร์ห้องเจอไหม
+		return true -- คืนค่า true เพราะเข้าห้องสำเร็จแล้ว แต่สร้าง Dispenser ไม่ได้
+	end
+
+	local selectPad = roomModel:FindFirstChild(roomID .. "_SelectPad")
+	if not selectPad then
+		warn("[RoomManager] Could not find Select Pad named:", roomID .. "_SelectPad", "in", roomModel.Name) -- 3. เช็คว่าหา Pad เจอไหม
+	end
+
+	local dispenserTemplate = ServerStorage:FindFirstChild("WaterDispenserTemplate")
+	if not dispenserTemplate then
+		warn("[RoomManager] Could not find WaterDispenserTemplate in ServerStorage!") -- 4. เช็คว่าหา Template เจอไหม
+	end
+
+	if selectPad and dispenserTemplate then -- 5. เช็คว่าเจอทั้งคู่ไหม
+		if not dispenserTemplate.PrimaryPart then
+			warn("[RoomManager] WaterDispenserTemplate is missing PrimaryPart!") -- 6. เช็คว่า Template มี PrimaryPart ไหม
+		else
+			-- ถ้าทุกอย่างพร้อม ก็สร้าง Dispenser
+			local padSize = selectPad.Size
+			local dispenserSize = dispenserTemplate:GetExtentsSize()
+			local spawnPosition = selectPad.Position + Vector3.new(0, padSize.Y / 2 + dispenserSize.Y / 2 + 0.1, 0)
+
+			local newDispenser = dispenserTemplate:Clone()
+			newDispenser:SetPrimaryPartCFrame(CFrame.new(spawnPosition))
+			newDispenser.Parent = roomModel -- ใส่ในโฟลเดอร์ห้อง
+
+			newDispenser:SetAttribute("RoomID", roomID)
+			newDispenser:SetAttribute("IsUpgradable", true)
+			newDispenser:SetAttribute("UpgradeLevel", 1)
+
+			print("[RoomManager] Successfully spawned Water Dispenser in room:", roomID) -- 7. เช็คว่าสร้างสำเร็จไหม
+		end
+	else
+		print("[RoomManager] Failed to spawn dispenser because Select Pad or Template was missing.") -- 8. เช็คว่าล้มเหลวเพราะอะไร
+	end
+	-------------------------------------------
+
+	return true -- สำเร็จ (แม้ว่าอาจจะสร้าง Dispenser ไม่ได้)
+end
+
+RequestRoomFunction.OnServerInvoke = onRequestRoom
+Players.PlayerRemoving:Connect(clearPlayerRoom)
