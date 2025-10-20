@@ -1,0 +1,21 @@
+-- LocalScript ที่อยู่ใน ScreenGui > WaterDisplayLabel
+
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer -- อ้างอิงถึงผู้เล่นคนปัจจุบัน
+local waterDisplayLabel = script.Parent -- อ้างอิงถึง TextLabel นี้
+
+-- รอให้ IntValue ชื่อ "Water" ถูกสร้างขึ้นใน Player
+local waterStat = player:WaitForChild("Water")
+
+-- ฟังก์ชันสำหรับอัปเดตข้อความบน UI
+local function updateWaterDisplay()
+	-- ตั้งค่าข้อความให้แสดง "Water: " ตามด้วยค่าปัจจุบัน
+	waterDisplayLabel.Text = waterStat.Value
+end
+
+-- ## ส่วนสำคัญ: คอย "ฟัง" การเปลี่ยนแปลง ##
+-- เมื่อค่า .Value ของ waterStat เปลี่ยนแปลง ให้เรียกใช้ฟังก์ชัน updateWaterDisplay
+waterStat.Changed:Connect(updateWaterDisplay)
+
+-- เรียกใช้อัปเดตครั้งแรก เพื่อแสดงค่าเริ่มต้นทันทีที่เข้าเกม
+updateWaterDisplay()
