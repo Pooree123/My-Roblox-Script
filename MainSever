@@ -1,0 +1,10 @@
+-- Script ใน ServerScriptService ชื่อ MainServer
+
+local ServerScriptService = game:GetService("ServerScriptService")
+
+-- เรียกใช้ Module ZombieExpHandler และสั่งให้เริ่ม Loop
+local ZombieExpModule = require(ServerScriptService.ZombieExpHandler)
+ZombieExpModule.startExpLoop()
+
+print("MainServer: Zombie EXP Loop started.")
+-- คุณสามารถ require และเรียกใช้ Module อื่นๆ ของคุณจากที่นี่ได้
