@@ -1,0 +1,186 @@
+-- Script ใน ServerScriptService ชื่อ UpgradeItemScript (เวอร์ชันตรวจสอบ UI)
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
+local UpgradeRequestEvent = ReplicatedStorage:WaitForChild("UpgradeRequestEvent")
+
+-- ตารางโมเดลอัปเกรด
+local UpgradedModels = { -- ผัก
+	[1] = ReplicatedStorage:WaitForChild("model"),
+	[2] = ReplicatedStorage:WaitForChild("UpgradedModel2"),
+	[3] = ReplicatedStorage:WaitForChild("UpgradedModel3"),
+}
+local UpgradedGates = { -- ประตู
+	[1] = ServerStorage:WaitForChild("GateClose_Template"),
+	[2] = ServerStorage:WaitForChild("GateClose_Level2"),
+	[3] = ServerStorage:WaitForChild("GateClose_Level3"),
+	[4] = ServerStorage:WaitForChild("GateClose_Level4"),
+}
+local UpgradedDispensers = { -- ตู้กดน้ำ
+	[1] = ServerStorage:WaitForChild("WaterDispenserTemplate"),
+	[2] = ServerStorage:WaitForChild("WaterDispenserTemplate"), -- << ต้องสร้างโมเดลนี้
+	[3] = ServerStorage:WaitForChild("WaterDispenserTemplate"), -- << ต้องสร้างโมเดลนี้
+}
+
+-- ตารางเลือดประตู
+local GateMaxHealthPerLevel = {
+	[1] = 100, [2] = 250, [3] = 500, [4] = 1000,
+}
+
+-- ตารางราคาอัปเกรด (ใช้ Water)
+local PlantUpgradeCost = {
+	[2] = 10, [3] = 20,
+}
+local GateUpgradeCost = {
+	[2] = 5, [3] = 60, [4] = 223,
+}
+local DispenserUpgradeCost = {
+	[2] = 5, [3] = 35,
+}
+
+-- ฟังก์ชันหาเลเวลประตูในห้อง
+local function getGateLevelInRoom(playerRoomID)
+	if not playerRoomID then return 0 end
+	local roomModel = Workspace.Room:FindFirstChild(playerRoomID)
+	local gateInRoom = roomModel and roomModel:FindFirstChild("gate close")
+	if gateInRoom then
+		return gateInRoom:GetAttribute("UpgradeLevel") or 0
+	end
+	return 0
+end
+
+UpgradeRequestEvent.OnServerEvent:Connect(function(player, itemToUpgrade)
+	-- 1. ตรวจสอบข้อมูลเบื้องต้น
+	if not (itemToUpgrade and itemToUpgrade:IsA("Model") and itemToUpgrade:GetAttribute("IsUpgradable")) then return end
+
+	local currentLvl = itemToUpgrade:GetAttribute("UpgradeLevel") or 1
+	local nextLvl = currentLvl + 1
+	local upgradeTable, costTable
+	local isGate, isDispenser, isPlant = false, false, false
+	local playerRoomID = player:GetAttribute("CurrentRoom")
+	local gateLevel = getGateLevelInRoom(playerRoomID)
+
+	-- 2. ตรวจสอบประเภทไอเทมและกำหนดตาราง/ราคา
+	if itemToUpgrade.Name == "gate close" then
+		upgradeTable = UpgradedGates
+		costTable = GateUpgradeCost
+		isGate = true
+	elseif itemToUpgrade.Name == "WaterDispenserTemplate" then -- << แก้ชื่อนี้ให้ตรงกับโมเดลตู้กดน้ำของคุณ
+		upgradeTable = UpgradedDispensers
+		costTable = DispenserUpgradeCost
+		isDispenser = true
+		if nextLvl > gateLevel then
+			print("อัปเกรดตู้กดน้ำไม่สำเร็จ: เลเวลตู้กดน้ำ ("..nextLvl..") จะสูงกว่าเลเวลประตู ("..gateLevel..") ไม่ได้")
+			return
+		end
+	else
+		upgradeTable = UpgradedModels
+		costTable = PlantUpgradeCost
+		isPlant = true
+		if nextLvl > gateLevel then
+			print("อัปเกรดผักไม่สำเร็จ: เลเวลผัก ("..nextLvl..") จะสูงกว่าเลเวลประตู ("..gateLevel..") ไม่ได้")
+			return
+		end
+	end
+
+	-- 3. ตรวจสอบเลเวลสูงสุด
+	if not upgradeTable or not upgradeTable[nextLvl] then
+		print(itemToUpgrade.Name .. " อยู่ในระดับสูงสุดแล้ว หรือ หาตารางอัปเกรดไม่เจอ")
+		return
+	end
+
+	-- 4. ตรวจสอบ Water
+	local waterStat = player:FindFirstChild("Water")
+	local currentWater = waterStat and waterStat.Value or 0
+	local cost = costTable and costTable[nextLvl]
+	if not cost then
+		print("อัปเกรดไม่สำเร็จ: ไม่ได้กำหนดราคาสำหรับเลเวล", nextLvl, "ของ", itemToUpgrade.Name)
+		return
+	elseif currentWater < cost then
+		print("อัปเกรดไม่สำเร็จ: มี Water ไม่พอ (ต้องการ", cost, "มี", currentWater, ")")
+		return
+	end
+
+	-- 5. เตรียมโมเดลใหม่และตรวจสอบ PrimaryPart
+	local newModelTemplate = upgradeTable[nextLvl]
+	local newModel = newModelTemplate:Clone()
+	if not (itemToUpgrade.PrimaryPart and newModel.PrimaryPart) then
+		warn("PrimaryPart ของ Model เก่า ('"..itemToUpgrade.Name.."') หรือใหม่ ('"..newModel.Name.."') หายไป!")
+		newModel:Destroy()
+		return
+	end
+
+	-- 6. จำค่าสำคัญของโมเดลเก่า
+	local oldCFrame = itemToUpgrade.PrimaryPart.CFrame
+	local oldParent = itemToUpgrade.Parent
+
+	-- 7. ทำลายโมเดลเก่า
+	itemToUpgrade:Destroy()
+
+	-- 8. สร้างโมเดลใหม่
+	newModel.Parent = oldParent
+	newModel:SetPrimaryPartCFrame(oldCFrame)
+
+	-- 9. หัก Water
+	if waterStat and cost then
+		waterStat.Value = waterStat.Value - cost
+		print(player.Name, "ใช้", cost, "Water อัปเกรด", newModel.Name, "เหลือ", waterStat.Value, "Water")
+	end
+
+	-- 10. ตั้งค่า Attribute พื้นฐาน
+	newModel:SetAttribute("IsUpgradable", true)
+	newModel:SetAttribute("UpgradeLevel", nextLvl)
+	if playerRoomID then
+		newModel:SetAttribute("RoomID", playerRoomID)
+	end
+
+	-- 11. การตั้งค่าเฉพาะประเภท
+	if isGate then
+		newModel.Name = "gate close"
+		local newMaxHealth = GateMaxHealthPerLevel[nextLvl] or 100
+		newModel:SetAttribute("MaxHealth", newMaxHealth)
+		newModel:SetAttribute("CurrentHealth", newMaxHealth)
+
+		-- สร้าง/อัปเดต UI ประตู (พร้อม Print Check)
+		local statusGuiTemplate = ServerStorage:FindFirstChild("GateStatusGuiTemplate")
+		if statusGuiTemplate then
+			local newStatusGui = statusGuiTemplate:Clone()
+
+			print("--- UI Check ---")
+			print("Cloned Status GUI:", newStatusGui, "| Type:", typeof(newStatusGui), "| Class:", newStatusGui and newStatusGui.ClassName or "nil")
+
+			local levelLabel = newStatusGui:FindFirstChild("LevelLabel")
+			local healthBarFrame = newStatusGui:FindFirstChild("HealthBarFrame")
+			local healthBarGreen = nil
+			if healthBarFrame then
+				healthBarGreen = healthBarFrame:FindFirstChild("HealthBarGreen")
+				print("Found HealthBarFrame, Found HealthBarGreen:", healthBarGreen)
+			else
+				print("Could not find HealthBarFrame directly inside newStatusGui!")
+			end
+
+			if levelLabel then levelLabel.Text = "Level: " .. nextLvl end
+
+			if healthBarGreen then
+				healthBarGreen.Size = UDim2.new(1, 0, 1, 0)
+			else
+				warn("Could not find HealthBarGreen to update size!")
+			end
+
+			if newModel.PrimaryPart then
+				newStatusGui.Adornee = newModel.PrimaryPart
+				newStatusGui.Parent = newModel.PrimaryPart
+				print("UI Parent set successfully.")
+			else
+				warn("Cannot set UI Parent, new model is missing PrimaryPart!")
+				newStatusGui:Destroy()
+			end
+		end
+	elseif isDispenser then
+		newModel.Name = "WaterDispenserTemplate" -- หรือชื่อตามเลเวล
+	end
+
+	print(player.Name .. " อัปเกรด '" .. newModel.Name .. "' สำเร็จเป็นเลเวล " .. nextLvl)
+end)
