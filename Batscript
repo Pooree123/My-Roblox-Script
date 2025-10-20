@@ -1,0 +1,113 @@
+-- Script ที่อยู่ใน Tool "BaseballBat" (เวอร์ชันดึงค่า EXP จาก Module - โค้ดเต็ม)
+
+local tool = script.Parent
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
+local ServerScriptService = game:GetService("ServerScriptService")
+
+local batHitEvent = ReplicatedStorage:WaitForChild("BatHitEvent")
+
+-- ## ดึงค่า EXP และ Level สูงสุด จาก Module ##
+local ZombieExpModule = require(ServerScriptService.ZombieExpHandler)
+local baseExpGain = ZombieExpModule.baseExpGain -- << ดึงค่ามาจาก Module
+local maxZombieLevel = ZombieExpModule.MAX_ZOMBIE_LEVEL -- << ดึงเลเวลสูงสุดมาด้วย
+-----------------------------------------
+
+local damageAmount = 15 -- ปริมาณความเสียหาย
+local serverCooldown = 0.6 -- Cooldown ฝั่งเซิร์ฟเวอร์
+local lastHitTime = {} -- เก็บเวลาล่าสุดที่ผู้เล่นแต่ละคนตี
+local gateHitSound = tool:WaitForChild("GateHitSound")
+
+batHitEvent.OnServerEvent:Connect(function(player, targetObject)
+	local targetHumanoid = nil
+	local targetGate = nil
+
+	-- ตรวจสอบประเภทเป้าหมาย
+	if targetObject and targetObject:IsA("Humanoid") then
+		targetHumanoid = targetObject
+	elseif targetObject and targetObject:IsA("Model") and targetObject.Name == "gate close" then
+		targetGate = targetObject
+	else
+		return -- ถ้าไม่ใช่ทั้งคู่ ก็ไม่ต้องทำอะไร
+	end
+
+	-- ตรวจสอบ Cooldown ฝั่งเซิร์ฟเวอร์
+	local now = tick()
+	if lastHitTime[player] and (now - lastHitTime[player] < serverCooldown) then
+		return -- ยังไม่ถึงเวลา Cooldown
+	end
+	lastHitTime[player] = now -- บันทึกเวลาที่ตี
+
+	-- ตรวจสอบ Character และ HumanoidRootPart ของผู้เล่น
+	local character = player.Character
+	if not character or not character:FindFirstChild("HumanoidRootPart") then
+		return
+	end
+
+	-- ตรวจสอบระยะห่าง
+	local targetPosition = nil
+	if targetHumanoid and targetHumanoid.Parent and targetHumanoid.Parent:FindFirstChild("HumanoidRootPart") then
+		targetPosition = targetHumanoid.Parent.HumanoidRootPart.Position
+	elseif targetGate and targetGate.PrimaryPart then
+		targetPosition = targetGate.PrimaryPart.Position
+	else
+		return -- หาตำแหน่งเป้าหมายไม่ได้
+	end
+
+	local distance = (character.HumanoidRootPart.Position - targetPosition).Magnitude
+	if distance > 8 then -- ถ้าห่างเกินไป ถือว่าผิดปกติ
+		return
+	end
+
+	-- ## ส่วนลดเลือด / เพิ่ม EXP ##
+	if targetHumanoid then
+		-- ถ้าเป็น Humanoid
+		if targetHumanoid.Parent == character then return end -- ป้องกันตีตัวเอง
+		targetHumanoid:TakeDamage(damageAmount)
+		print("เซิร์ฟเวอร์ยืนยันการโจมตี:", targetHumanoid.Parent.Name, "เสียเลือด", damageAmount)
+
+	elseif targetGate then
+		-- ถ้าเป็น ประตู
+		-- เล่นเสียงตีประตู
+		if gateHitSound then
+			gateHitSound:Play()
+		end
+
+		-- ลดเลือดประตู
+		local currentHealth = targetGate:GetAttribute("CurrentHealth") or 0
+		local newHealth = math.max(0, currentHealth - damageAmount)
+		targetGate:SetAttribute("CurrentHealth", newHealth)
+		print("เซิร์ฟเวอร์ยืนยันการโจมตี: ประตู เสียเลือด", damageAmount, "เหลือ", newHealth)
+
+		-- ## เพิ่ม EXP ให้ผู้เล่น (ถ้าเป็นซอมบี้) ##
+		if CollectionService:HasTag(character, "Zombie") then -- เช็ค Tag จาก Character ของ Player
+			local expStat = player:FindFirstChild("ZombieEXP")
+			local levelStat = player:FindFirstChild("ZombieLevel")
+			local maxExpStat = player:FindFirstChild("ZombieMaxEXP") -- หา Max EXP ไว้เช็ค
+
+			-- ตรวจสอบว่ายังไม่เลเวลตัน และหาค่า EXP เจอ
+			if expStat and levelStat and maxExpStat and levelStat.Value < maxZombieLevel then -- ใช้ค่า MAX_LEVEL จาก Module
+				expStat.Value = expStat.Value + baseExpGain -- << ใช้ค่า baseExpGain ที่ดึงมา
+				print(player.Name, "ได้รับ", baseExpGain, "EXP จากการตีประตู!")
+				-- ไม่ต้องเช็คเลเวลอัพตรงนี้ ปล่อยให้ ZombieExpHandler จัดการ
+			elseif levelStat and levelStat.Value >= maxZombieLevel then
+				print(player.Name, "ตีประตู แต่เลเวล Zombie ตันแล้ว")
+			end
+		end
+		-------------------------------------------------------
+
+		-- ทำลายประตู (ถ้าเลือดหมด)
+		if newHealth <= 0 then
+			print("ประตูพังแล้ว! กำลังทำลาย...")
+			targetGate:Destroy()
+		end
+	end
+end)
+
+-- เคลียร์ Cooldown เมื่อผู้เล่นออกจากเกม
+game.Players.PlayerRemoving:Connect(function(player)
+	if lastHitTime[player] then
+		lastHitTime[player] = nil
+	end
+end)
