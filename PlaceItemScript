@@ -1,0 +1,34 @@
+-- Script ใน ServerScriptService ชื่อ PlaceItemScript (เวอร์ชันแก้ไขสมบูรณ์)
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
+
+local PlaceItemEvent = ReplicatedStorage:WaitForChild("PlaceItemEvent")
+local itemToPlace = ReplicatedStorage:WaitForChild("model")
+
+PlaceItemEvent.OnServerEvent:Connect(function(player, targetTile)
+	if not (targetTile and targetTile:IsA("BasePart")) then return end
+	if not CollectionService:HasTag(targetTile, "PlaceableTile") then return end
+	if targetTile:GetAttribute("Occupied") then return end
+
+	local playerRoom = player:GetAttribute("CurrentRoom")
+	local tileRoom = targetTile:GetAttribute("RoomID")
+	if not playerRoom or not tileRoom or playerRoom ~= tileRoom then return end
+
+	local newItem = itemToPlace:Clone()
+	if not newItem.PrimaryPart then newItem:Destroy() return end
+
+	local yOffset = newItem.PrimaryPart.Size.Y / 2
+	local newPosition = targetTile.Position + Vector3.new(0, yOffset, 0)
+
+	newItem:SetPrimaryPartCFrame(CFrame.new(newPosition))
+	newItem.Parent = workspace
+
+	targetTile:SetAttribute("Occupied", true)
+
+	-- ## ส่วนสำคัญ: กำหนด RoomID ให้กับไอเทมที่เพิ่งสร้าง ##
+	newItem:SetAttribute("RoomID", tileRoom)
+
+	print(player.Name .. " วางไอเทมสำเร็จในห้อง " .. playerRoom)
+end)
