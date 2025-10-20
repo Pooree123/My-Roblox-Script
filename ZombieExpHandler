@@ -1,0 +1,96 @@
+-- ModuleScript ใน ServerScriptService ชื่อ ZombieExpHandler
+print("--- ZombieExpHandler Module Loaded ---")
+
+local Players = game:GetService("Players")
+local CollectionService = game:GetService("CollectionService")
+
+local module = {} -- สร้างตารางสำหรับ Module
+
+-- ## ย้ายค่าคงที่มาไว้ตรงนี้ ##
+module.expInterval = 2.0
+module.StartbaseExpGain = 20
+module.baseExpGain = 20 -- << ค่า EXP หลักอยู่ที่นี่
+module.MAX_ZOMBIE_LEVEL = 15
+---------------------------
+
+-- ฟังก์ชันคำนวณ EXP ที่ต้องใช้
+local function getExpNeededForLevel(level)
+	local effectiveLevel = math.min(level, module.MAX_ZOMBIE_LEVEL) -- ใช้ module.MAX_ZOMBIE_LEVEL
+	return 50 + (effectiveLevel * 50)
+end
+
+-- ฟังก์ชันสร้างค่า Level และ EXP
+local function initializeZombieStats(player)
+	-- ... (โค้ดส่วนนี้เหมือนเดิม) ...
+	local levelStat = player:FindFirstChild("ZombieLevel")
+	if not levelStat then
+		levelStat = Instance.new("IntValue")
+		levelStat.Name = "ZombieLevel"
+		levelStat.Value = 1
+		levelStat.Parent = player
+	end
+	local expStat = player:FindFirstChild("ZombieEXP")
+	if not expStat then
+		expStat = Instance.new("IntValue")
+		expStat.Name = "ZombieEXP"
+		expStat.Value = 0
+		expStat.Parent = player
+	end
+	local maxExpStat = player:FindFirstChild("ZombieMaxEXP")
+	if not maxExpStat then
+		maxExpStat = Instance.new("IntValue")
+		maxExpStat.Name = "ZombieMaxEXP"
+		maxExpStat.Value = getExpNeededForLevel(levelStat.Value)
+		maxExpStat.Parent = player
+	else
+		maxExpStat.Value = getExpNeededForLevel(levelStat.Value)
+	end
+	return levelStat, expStat, maxExpStat
+end
+
+-- ฟังก์ชันสำหรับเริ่ม Loop การให้ EXP (จะถูกเรียกจากสคริปต์อื่น)
+function module.startExpLoop()
+	print("Starting Zombie EXP Loop...")
+	-- ใช้ coroutine เพื่อให้ Loop ทำงานเบื้องหลัง ไม่บล็อกสคริปต์อื่น
+	coroutine.wrap(function()
+		while task.wait(module.expInterval) do -- ใช้ module.expInterval
+			local zombieCharacters = CollectionService:GetTagged("Zombie")
+			for _, character in ipairs(zombieCharacters) do
+				local player = Players:GetPlayerFromCharacter(character)
+				if player then
+					local levelStat, expStat, maxExpStat = initializeZombieStats(player)
+
+					if levelStat.Value < module.MAX_ZOMBIE_LEVEL or (levelStat.Value == module.MAX_ZOMBIE_LEVEL and expStat.Value < maxExpStat.Value) then
+						expStat.Value = expStat.Value + module.baseExpGain -- ใช้ module.baseExpGain
+						print(player.Name, module.baseExpGain)
+
+						local expNeeded = maxExpStat.Value
+						if expStat.Value >= expNeeded and levelStat.Value < module.MAX_ZOMBIE_LEVEL then
+							module.baseExpGain = module.StartbaseExpGain + ((0.1 * levelStat.Value) * module.StartbaseExpGain)
+							levelStat.Value = levelStat.Value + 1
+							expStat.Value = expStat.Value - expNeeded
+							local newExpNeeded = getExpNeededForLevel(levelStat.Value)
+							maxExpStat.Value = newExpNeeded
+							print(player.Name, "เลเวลอัพเป็น ZombieLevel", levelStat.Value, "! (ต้องการ", newExpNeeded, "EXP)")
+							local humanoid = character:FindFirstChildOfClass("Humanoid")
+							if humanoid then humanoid.Health = humanoid.MaxHealth end -- รีเลือด
+						elseif levelStat.Value >= module.MAX_ZOMBIE_LEVEL then
+							expStat.Value = math.min(expStat.Value, maxExpStat.Value)
+							
+						end
+					end
+				end
+			end
+		end
+	end)() -- เรียก coroutine ให้ทำงาน
+end
+
+-- ส่วน GetInstanceAddedSignal (ยังคงทำงานเมื่อ Module ถูก require ครั้งแรก)
+CollectionService:GetInstanceAddedSignal("Zombie"):Connect(function(instance)
+	local player = Players:GetPlayerFromCharacter(instance)
+	if player then
+		initializeZombieStats(player)
+	end
+end)
+
+return module -- คืนค่าตาราง Module ออกไป
