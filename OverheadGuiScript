@@ -1,0 +1,140 @@
+-- Script ใน ServerScriptService ชื่อ OverheadGuiScript (เวอร์ชันแสดง HumanName เท่านั้น)
+
+local Players = game:GetService("Players")
+local ServerStorage = game:GetService("ServerStorage")
+local CollectionService = game:GetService("CollectionService")
+
+local overheadGuiTemplate = ServerStorage:WaitForChild("OverheadGuiTemplate")
+
+-- ฟังก์ชันอัปเดต UI ทั้งหมดตามสถานะ
+local function updateOverheadUI(player, character, backgroundFrame)
+	-- หาองค์ประกอบ UI ทั้งหมด
+	local humanNameLabel = backgroundFrame:FindFirstChild("HumanName")
+	local zombieNameLabel = backgroundFrame:FindFirstChild("ZombieName")
+	local levelLabel = backgroundFrame:FindFirstChild("ZombieLevelLabel")
+	local expBarFrame = backgroundFrame:FindFirstChild("ExpBarFrame")
+	local healthBarFrame = backgroundFrame:FindFirstChild("HealthBarFrame")
+	local healthBarGreen = healthBarFrame and healthBarFrame:FindFirstChild("HealthBarGreen")
+	local statusLabel = backgroundFrame:FindFirstChild("StatusLabel") -- หา Status Label (ถ้ามี)
+
+	local isZombie = CollectionService:HasTag(character, "Zombie")
+
+	-- ## ส่วนที่แก้ไข: ตั้งค่าการมองเห็นตามกฎใหม่ ##
+	if humanNameLabel then humanNameLabel.Visible = not isZombie end -- แสดงเมื่อเป็น Human เท่านั้น
+	if zombieNameLabel then zombieNameLabel.Visible = isZombie end  -- แสดงเมื่อเป็น Zombie
+	if levelLabel then levelLabel.Visible = isZombie end      -- แสดงเมื่อเป็น Zombie
+	if expBarFrame then expBarFrame.Visible = isZombie end     -- แสดงเมื่อเป็น Zombie
+	if healthBarFrame then healthBarFrame.Visible = isZombie end -- แสดงเมื่อเป็น Zombie
+	if statusLabel then statusLabel.Visible = isZombie end    -- แสดงเมื่อเป็น Zombie (ถ้าต้องการ)
+	----------------------------------------------------
+
+	-- ตั้งค่าข้อความชื่อ
+	local displayName = player.DisplayName
+	if isZombie and zombieNameLabel then
+		zombieNameLabel.Text = displayName
+	elseif not isZombie and humanNameLabel then
+		humanNameLabel.Text = displayName
+	end
+
+	-- อัปเดต Level/EXP (ทำงานเฉพาะตอน Visible เป็น true อยู่แล้ว)
+	local levelStat = player:FindFirstChild("ZombieLevel")
+	local expStat = player:FindFirstChild("ZombieEXP")
+	local maxExpStat = player:FindFirstChild("ZombieMaxEXP")
+	if isZombie and levelLabel and levelStat then -- เช็ค isZombie เพิ่ม
+		levelLabel.Text = "Lv: " .. levelStat.Value
+	end
+	local expBarFill = expBarFrame and expBarFrame:FindFirstChild("ExpBarFill")
+	if isZombie and expBarFill and expStat and maxExpStat then -- เช็ค isZombie เพิ่ม
+		local expNeeded = maxExpStat.Value
+		local currentExp = expStat.Value
+		local expScale = 0
+		if expNeeded > 0 then expScale = math.clamp(currentExp / expNeeded, 0, 1) end
+		expBarFill.Size = UDim2.new(expScale, 0, 1, 0)
+	end
+
+	-- อัปเดต Health Bar (ทำงานเฉพาะตอน Visible เป็น true อยู่แล้ว)
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if isZombie and humanoid and healthBarGreen then -- เช็ค isZombie เพิ่ม
+		local currentHealth = humanoid.Health
+		local maxHealth = humanoid.MaxHealth
+		local healthScale = 0
+		if maxHealth > 0 then healthScale = math.clamp(currentHealth / maxHealth, 0, 1) end
+		healthBarGreen.Size = UDim2.new(healthScale, 0, 1, 0)
+	end
+end
+
+-- (ส่วนที่เหลือของสคริปต์: createOverheadGui, Listener ของ Tag, PlayerAdded เหมือนเดิมทุกประการ)
+-- ... (คัดลอกส่วนที่เหลือจากเวอร์ชันก่อนหน้ามาใส่) ...
+-- ฟังก์ชันสร้าง UI ทั้งหมด
+local function createOverheadGui(character)
+	local head = character:WaitForChild("Head")
+	local player = Players:GetPlayerFromCharacter(character)
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not player or not humanoid then return end
+
+	local oldGui = head:FindFirstChild(overheadGuiTemplate.Name)
+	if oldGui then oldGui:Destroy() end
+
+	local newGui = overheadGuiTemplate:Clone()
+	newGui.Adornee = head
+	newGui.Parent = head
+
+	local backgroundFrame = newGui:FindFirstChild("BackgroundFrame")
+	if not backgroundFrame then return end
+
+	-- เรียกอัปเดต UI ครั้งแรก
+	updateOverheadUI(player, character, backgroundFrame)
+
+	-- เชื่อมต่อ Signal สำหรับ Level/EXP
+	local function listenToStat(statName)
+		local stat = player:FindFirstChild(statName)
+		if stat then
+			stat.Changed:Connect(function() updateOverheadUI(player, character, backgroundFrame) end) -- เรียกฟังก์ชันหลัก
+		else
+			local connection
+			connection = player.ChildAdded:Connect(function(child)
+				if child.Name == statName and child:IsA("IntValue") then
+					child.Changed:Connect(function() updateOverheadUI(player, character, backgroundFrame) end) -- เรียกฟังก์ชันหลัก
+					updateOverheadUI(player, character, backgroundFrame) -- อัปเดตทันทีที่เจอ
+					if connection then connection:Disconnect() end
+				end
+			end)
+		end
+	end
+	listenToStat("ZombieLevel")
+	listenToStat("ZombieEXP")
+	listenToStat("ZombieMaxEXP")
+
+	-- เชื่อมต่อ Signal สำหรับ Health
+	humanoid.HealthChanged:Connect(function(currentHealth)
+		updateOverheadUI(player, character, backgroundFrame) -- เรียกฟังก์ชันหลัก
+	end)
+	humanoid:GetPropertyChangedSignal("MaxHealth"):Connect(function()
+		updateOverheadUI(player, character, backgroundFrame) -- เรียกฟังก์ชันหลัก
+	end)
+end
+
+-- ฟังก์ชันที่คอย "ฟัง" การเปลี่ยนแปลงของ Tag
+CollectionService:GetInstanceAddedSignal("Zombie"):Connect(function(instance)
+	local player = Players:GetPlayerFromCharacter(instance)
+	local head = instance:FindFirstChild("Head")
+	local overheadGui = head and head:FindFirstChild(overheadGuiTemplate.Name)
+	local backgroundFrame = overheadGui and overheadGui:FindFirstChild("BackgroundFrame")
+	if player and backgroundFrame then
+		updateOverheadUI(player, instance, backgroundFrame) -- เรียกฟังก์ชันหลัก
+	end
+end)
+CollectionService:GetInstanceRemovedSignal("Zombie"):Connect(function(instance)
+	local player = Players:GetPlayerFromCharacter(instance)
+	local head = instance:FindFirstChild("Head")
+	local overheadGui = head and head:FindFirstChild(overheadGuiTemplate.Name)
+	local backgroundFrame = overheadGui and overheadGui:FindFirstChild("BackgroundFrame")
+	if player and backgroundFrame then
+		updateOverheadUI(player, instance, backgroundFrame) -- เรียกฟังก์ชันหลัก
+	end
+end)
+
+-- เมื่อผู้เล่นเข้าเกม
+Players.PlayerAdded:Connect(function(player)
+	player.CharacterAdded:Connect(createOverheadGui)
+end)
