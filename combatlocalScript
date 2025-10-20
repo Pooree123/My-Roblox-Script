@@ -1,0 +1,121 @@
+-- LocalScript ที่อยู่ใน Tool "BaseballBat" (เวอร์ชันใช้ Hitbox แยก)
+
+local tool = script.Parent
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local animator = humanoid:WaitForChild("Animator")
+
+-- อ้างอิงถึง Part ต่างๆ
+local handlePart = tool:WaitForChild("Handle")
+local hitboxPart = tool:WaitForChild("Hitbox") -- อ้างอิง Hitbox
+
+-- ตั้งค่า
+local animationId = "rbxassetid://75759747422598" -- ID ท่าตีของคุณ
+local swingTime = 0.5 -- ระยะเวลา Animation โดยประมาณ
+local damageCooldown = 1.3 -- หน่วงเวลาหลังตี
+
+-- Event
+local batHitEvent = ReplicatedStorage:WaitForChild("BatHitEvent")
+
+-- โหลด Animation
+local swingAnimation = Instance.new("Animation")
+swingAnimation.AnimationId = animationId
+local swingTrack = animator:LoadAnimation(swingAnimation)
+if swingTrack then
+	swingTrack.Priority = Enum.AnimationPriority.Action
+else
+	warn("BaseballBat: โหลด Animation ไม่สำเร็จ! ID:", animationId)
+end
+
+-- State Variables
+local canSwing = true
+local hitDuringSwing = {} -- เก็บเป้าหมายที่ตีโดนแล้วในครั้งนี้
+local hitConnection = nil -- ตัวแปรเก็บ Connection ของ .Touched
+
+-- ฟังก์ชันกลางสำหรับจัดการการชน
+local function processHit(hitPart)
+	-- ป้องกันการชนกับตัวเอง หรือ Part ที่ไม่มี Parent
+	if hitPart == handlePart or hitPart == hitboxPart or not hitPart.Parent then return end
+
+	local targetCharacter = hitPart.Parent
+	local targetHumanoid = targetCharacter:FindFirstChildOfClass("Humanoid")
+	local targetGate = nil -- ประกาศไว้ก่อน
+
+	if targetHumanoid then
+		-- ถ้าเจอ Humanoid (ผู้เล่น หรือ NPC)
+		if targetCharacter ~= character and not hitDuringSwing[targetHumanoid] then
+			local targetPlayer = Players:GetPlayerFromCharacter(targetCharacter)
+			-- ตรวจสอบว่าเป็นผู้เล่นอื่น หรือ NPC ที่มี Attribute IsEnemy (ถ้ามี)
+			if targetPlayer or targetCharacter:GetAttribute("IsEnemy") then
+				hitDuringSwing[targetHumanoid] = true -- Mark ว่าตีโดนแล้ว
+				batHitEvent:FireServer(targetHumanoid) -- ส่ง Humanoid ไป
+				-- print("[Local] Fired BatHitEvent (Humanoid):", targetHumanoid.Parent.Name)
+			end
+		end
+	else
+		-- ถ้าไม่เจอ Humanoid, ลองหาว่าเป็นประตูหรือไม่
+		if hitPart.Parent:IsA("Model") and hitPart.Parent.Name == "gate close" then
+			targetGate = hitPart.Parent
+		else
+			targetGate = hitPart:FindFirstAncestor("gate close")
+			if targetGate and not targetGate:IsA("Model") then
+				targetGate = nil -- ตรวจสอบว่าเป็น Model จริงๆ
+			end
+		end
+
+		-- ถ้าเจอว่าเป็นประตู
+		if targetGate and not hitDuringSwing[targetGate] then
+			hitDuringSwing[targetGate] = true -- Mark ว่าตีโดนแล้ว
+			batHitEvent:FireServer(targetGate) -- ส่ง Model ประตูไป
+			-- print("[Local] Fired BatHitEvent (Gate):", targetGate.Name)
+		end
+	end
+end
+
+-- เมื่อคลิกใช้ Tool
+tool.Activated:Connect(function()
+	if not (canSwing and swingTrack) then return end
+	canSwing = false
+	hitDuringSwing = {} -- รีเซ็ตรายชื่อที่ตีโดน
+	swingTrack:Play()
+
+	-- เปิดใช้งานและเชื่อมต่อ Hitbox
+	if hitConnection then hitConnection:Disconnect() end -- ยกเลิกของเก่า (ถ้ามี)
+	hitboxPart.CanTouch = true
+	hitConnection = hitboxPart.Touched:Connect(processHit)
+
+	-- รอให้ Animation เล่นจบ (โดยประมาณ)
+	task.wait(swingTime)
+
+	-- ปิดใช้งาน Hitbox
+	if hitConnection then
+		hitConnection:Disconnect()
+		hitConnection = nil
+	end
+	hitboxPart.CanTouch = false
+
+	-- รอ Cooldown ที่เหลือ
+	task.wait(damageCooldown - swingTime)
+	canSwing = true
+end)
+
+-- เมื่อเก็บ Tool
+tool.Unequipped:Connect(function()
+	if swingTrack and swingTrack.IsPlaying then
+		swingTrack:Stop()
+	end
+	-- ปิดใช้งาน Hitbox เมื่อเก็บ
+	if hitConnection then
+		hitConnection:Disconnect()
+		hitConnection = nil
+	end
+	hitboxPart.CanTouch = false
+	canSwing = true -- รีเซ็ต Cooldown
+end)
+
+-- ปิดการตรวจจับของ Hitbox ตอนเริ่ม
+hitboxPart.CanTouch = false
