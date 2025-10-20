@@ -1,0 +1,52 @@
+-- Script (Server) ที่อยู่ใน ServerStorage > GateStatusGuiTemplate (เวอร์ชันรอ Adornee)
+
+local billboardGui = script.Parent
+local healthBarGreen = billboardGui:WaitForChild("HealthBarFrame"):WaitForChild("HealthBarGreen")
+
+local gatePart = nil
+local gateModel = nil
+
+-- รอ Adornee
+local waitStartTime = tick()
+while not billboardGui.Adornee do
+	if tick() - waitStartTime > 10 then
+		warn("[Gate UI - Server] สคริปต์ใน", billboardGui:GetFullName(), "รอ Adornee นานเกินไป!")
+		return
+	end
+	task.wait(0.1)
+end
+gatePart = billboardGui.Adornee
+gateModel = gatePart.Parent
+print("[Gate UI - Server] Initial Adornee found:", gatePart and gatePart:GetFullName() or "nil", "- Initial Model found:", gateModel and gateModel:GetFullName() or "nil")
+
+task.wait(0.1) -- รอเผื่อ Attribute ยังไม่พร้อม
+
+-- ฟังก์ชันสำหรับอัปเดตแถบเลือด
+local function updateHealthBar()
+	if not gateModel or not gateModel.Parent then -- ตรวจสอบเผื่อประตูถูกทำลาย
+		healthBarGreen.Visible = false
+		return
+	end
+
+	local currentHealth = gateModel:GetAttribute("CurrentHealth")
+	local maxHealth = gateModel:GetAttribute("MaxHealth")
+
+	if typeof(currentHealth) ~= "number" or typeof(maxHealth) ~= "number" or maxHealth <= 0 then
+		healthBarGreen.Visible = false
+		return
+	end
+
+	healthBarGreen.Visible = true
+	local healthScale = math.clamp(currentHealth / maxHealth, 0, 1)
+	healthBarGreen.Size = UDim2.new(healthScale, 0, 1, 0)
+end
+
+-- ตรวจสอบว่าหา gateModel เจอจริงๆ ก่อนเชื่อมต่อ Signal
+if gateModel then
+	gateModel:GetAttributeChangedSignal("CurrentHealth"):Connect(updateHealthBar)
+	gateModel:GetAttributeChangedSignal("MaxHealth"):Connect(updateHealthBar)
+	print("[Gate UI - Server] Script started and connected for", gateModel:GetFullName())
+	updateHealthBar() -- เรียกครั้งแรก
+else
+	warn("[Gate UI - Server] ไม่พบ Model ของประตูเริ่มต้นสำหรับ UI:", billboardGui:GetFullName())
+end
