@@ -1,0 +1,106 @@
+-- สร้างตัวแปรอ้างอิงถึงบล็อกที่เราต้องการ
+local partToShoot = script.Parent
+partToShoot.Anchored = true
+partToShoot.CanCollide = true
+local cartoonshoot = partToShoot:FindFirstChild("cartoonshoot")
+local CollectionService = game:GetService("CollectionService")
+
+local debounce = false
+local RunService = game:GetService("RunService")
+local Debris = game:GetService("Debris")
+
+-- ฟังก์ชันสำหรับสร้างและยิงกระสุนติดตาม
+local function fire(targetHumanoid)
+	if debounce then return end
+	debounce = true
+
+	if cartoonshoot then
+		cartoonshoot:Play()
+	end
+
+	-- สร้าง Part ใหม่เพื่อใช้เป็นกระสุน
+	local projectile = Instance.new("Part")
+	projectile.Size = Vector3.new(0.3, 0.3, 0.3)
+	projectile.CanCollide = false
+	projectile.Anchored = true
+	projectile.Parent = workspace
+	projectile.CFrame = partToShoot.CFrame
+	projectile.BrickColor = BrickColor.White()
+	projectile.Material = Enum.Material.Neon
+
+	-- กำหนดอายุของกระสุน
+	Debris:AddItem(projectile, 3)
+
+	-- ## ส่วนสำคัญ: ลูปติดตามเป้าหมาย (เวอร์ชันตรวจสอบระยะ) ##
+	local projectileSpeed = 80 -- ความเร็วของกระสุน
+	local damageRadius = 3   -- **ตัวแปรใหม่: รัศมีที่จะทำดาเมจ (หน่วยเป็น stud)**
+
+	local homingConnection = nil
+	homingConnection = RunService.Heartbeat:Connect(function(deltaTime)
+		-- ตรวจสอบว่าถ้าเป้าหมายตาย หรือกระสุนหายไปแล้ว ให้หยุดทำงาน
+		if not targetHumanoid or targetHumanoid.Health <= 0 or not projectile.Parent then
+			homingConnection:Disconnect()
+			if projectile.Parent then projectile:Destroy() end -- เผื่อกระสุนค้าง
+			return
+		end
+
+		local targetRootPart = targetHumanoid.Parent and targetHumanoid.Parent:FindFirstChild("HumanoidRootPart")
+		if not targetRootPart then
+			homingConnection:Disconnect()
+			if projectile.Parent then projectile:Destroy() end
+			return
+		end
+
+		-- คำนวณตำแหน่งและทิศทาง (เหมือนเดิม)
+		local distance = (targetRootPart.Position - projectile.Position).Magnitude
+		local timeToReach = distance / projectileSpeed
+		local predictedPosition = targetRootPart.Position + (targetRootPart.AssemblyLinearVelocity * timeToReach)
+		local direction = (predictedPosition - projectile.Position).Unit
+
+		-- ขยับกระสุน
+		projectile.CFrame = projectile.CFrame + direction * projectileSpeed * deltaTime
+
+		-- ## ส่วนที่เปลี่ยนแปลง: ตรวจสอบระยะห่างเพื่อทำดาเมจ ##
+		-- คำนวณระยะห่างปัจจุบันอีกครั้งหลังขยับกระสุนแล้ว
+		local currentDistance = (targetRootPart.Position - projectile.Position).Magnitude
+
+		if currentDistance <= damageRadius then
+			-- ถ้ากระสุนเข้ามาในรัศมี ให้ทำดาเมจและหายไปทันที
+			targetHumanoid:TakeDamage(0.5)
+			print(targetHumanoid.Parent.Name .. " ได้รับดาเมจจากรัศมีกระสุน")
+
+			homingConnection:Disconnect() -- หยุดการทำงานของลูปนี้
+			projectile:Destroy() -- ทำลายกระสุน
+		end
+	end)
+
+	-- รอ 1 วินาทีแล้วค่อยยิงได้อีกครั้ง
+	task.wait(1)
+	debounce = false
+end
+
+while task.wait(0.1) do
+	local closestTarget = nil
+	local closestDistance = 40 -- ระยะยิง
+
+	-- ค้นหาทุกอย่างที่มี Tag "Zombie"
+	local allZombies = CollectionService:GetTagged("Zombie")
+
+	for _, zombieCharacter in ipairs(allZombies) do
+		local humanoid = zombieCharacter:FindFirstChild("Humanoid")
+		local head = zombieCharacter:FindFirstChild("Head")
+
+		if humanoid and humanoid.Health > 0 and head then
+			local distance = (partToShoot.Position - head.Position).Magnitude
+			if distance < closestDistance then
+				closestDistance = distance
+				closestTarget = humanoid -- เก็บ Humanoid ของเป้าหมายที่ใกล้ที่สุด
+			end
+		end
+	end
+
+	-- ถ้าเจอเป้าหมาย ก็ยิง
+	if closestTarget and not debounce then
+		fire(closestTarget)
+	end
+end
